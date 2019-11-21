@@ -20,14 +20,17 @@ class NeuralLayer:
                 (num_ns, num_inputs+1)
             )
 
-    def update_a_dFn(self, p):
+    def propagate(self, p):
+        n = self.compute_n(p)
+        # Update our a and dFn. MUST COMPUTE a FIRST!
+        self.a = self.f(n)
+        self.dFn = np.diagflat(self.df(n))
+
+    def compute_n(self, p):
         # append bias "input"
         p = np.r_[p, [[1]]]
         # Apply weights/bias
-        n = self.X @ p
-        # Compute transfers. MUST COMPUTE a FIRST!
-        self.a = self.f(n)
-        self.dFn = np.diagflat(self.df(n))
+        return self.X @ p
 
     def update_X(self, alpha):
         # Update X with iterative, stochastic gradient descent
@@ -35,7 +38,7 @@ class NeuralLayer:
         self.X = self.X - alpha * self.s @ np.r_[self.prev_layer.a, [[1]]].T
 
     def update_s(self):
-        # Only use weights from X to compute sensitivity
+        # Only use weights from X to compute sensitivity, not biases
         self.s = self.dFn @ np.delete(self.next_layer.X, -1, 1).T @ self.next_layer.s
 
     def print_net(self):
@@ -77,8 +80,8 @@ class InputNeuralLayer(NeuralLayer):
             p = p.T
         # Store input, to be used in backpropagation
         self.p = p
-        # Update our a
-        self.update_a_dFn(p)
+        # Compute and update
+        super().propagate(p)
         # Update next layer
         self.next_layer.propagate()
 
@@ -86,6 +89,13 @@ class InputNeuralLayer(NeuralLayer):
     def backpropagate(self, alpha):
         self.update_s()
         self.X = self.X - alpha * self.s @ np.r_[self.p, [[1]]].T
+
+    def compute_a(self, p):
+        # Make sure we have a column vector
+        if p.shape[0] == 1:
+            p = p.T
+        self.a = self.f(self.compute_n(p))
+        self.next_layer.compute_a()
 
     def print_net(self):
         super().print_net()
@@ -101,7 +111,7 @@ class HiddenNeuralLayer(NeuralLayer):
     # Propagates forward network inputs
     def propagate(self):
         # Update our a
-        self.update_a_dFn(self.prev_layer.a)
+        super().propagate(self.prev_layer.a)
         # Update next layer
         self.next_layer.propagate()
 
@@ -111,6 +121,10 @@ class HiddenNeuralLayer(NeuralLayer):
         self.update_X(alpha)
 
         self.prev_layer.backpropagate(alpha)
+
+    def compute_a(self):
+        self.a = self.f(self.compute_n(self.prev_layer.a))
+        self.next_layer.compute_a()
 
     def print_net(self):
         super().print_net()
@@ -125,7 +139,7 @@ class OutputNeuralLayer(NeuralLayer):
     # Propagates forward network inputs
     def propagate(self):
         # Update our a
-        self.update_a_dFn(self.prev_layer.a)
+        super().propagate(self.prev_layer.a)
 
     # Backpropagates network "sensitivities" and updates weights
     def backpropagate(self, alpha, t):
@@ -137,6 +151,9 @@ class OutputNeuralLayer(NeuralLayer):
         self.update_X(alpha)
 
         self.prev_layer.backpropagate(alpha)
+
+    def compute_a(self):
+        self.a = self.f(self.compute_n(self.prev_layer.a))
 
     def print_net(self):
         super().print_net()
@@ -177,27 +194,37 @@ class NeuralNetwork:
             output_args['df'],
             prev_layer
         )
-        prev_layer.next_layer = self.output_layer
+        prev_layer.next_layer = self.output_layer      
 
-    def propagate(self, p):
-        self.input_layer.propagate(p)
-
-    def backpropagate(self, alpha, t):
-        self.output_layer.backpropagate(alpha, t)
-
+    # Do iterative backpropagation Least-mean-square stochastic gradient descent
     def train(self, trainingExamples, trainingLabels, alpha):
         for example, label in zip(trainingExamples, trainingLabels):
-            self.propagate(example)
-            self.backpropagate(alpha, label)
+            self.input_layer.propagate(example)
+            self.output_layer.backpropagate(alpha, label)
+
+    def classify(self, example):
+        self.input_layer.compute_a(example)
+        return self.output_layer.a.argmax()
+
+    # Compute the percent classified correctly
+    def test(self, testExamples, testLabels):
+        total = testLabels.shape[0]
+        correct = 0
+        for example, label in zip(testExamples, testLabels):
+            if self.classify(example) == label:
+                correct += 1
+        return correct / total
 
     def print_net(self):
         self.input_layer.print_net()
+
 
 # Functions to prepare MNIST data for input in my NN
 def parse_idx_images(idx_images):
     image_size = idx_images.shape[1] * idx_images.shape[2]
     flat = idx_images.reshape((idx_images.shape[0], image_size))
     return np.expand_dims(flat, 1)
+
 
 # Encodes scalar as vector with a 1 at the corresponding index
 def parse_idx_labels(idx_labels, categories):
@@ -207,6 +234,7 @@ def parse_idx_labels(idx_labels, categories):
         vector_labels[i][scalar_label] = 1
     return np.expand_dims(vector_labels, 1)
 
+
 # Main
 if __name__ == "__main__":
     i = {
@@ -214,7 +242,7 @@ if __name__ == "__main__":
         'f': 'logsig',
         'df': 'dlogsig',
     }
-    m = {
+    h = {
         'num_ns': 300,
         'f': 'logsig',
         'df': 'dlogsig',
@@ -225,20 +253,28 @@ if __name__ == "__main__":
         'df': 'dsoftmax',
     }
 
-    nn = NeuralNetwork(784, [i, m, o])
+    nn = NeuralNetwork(784, [i, h, o])
 
-    # Training
+    # Training data
     train_examples = idx2numpy.convert_from_file("MNIST_digits\\train-images-idx3-ubyte")
     s_train_labels = idx2numpy.convert_from_file("MNIST_digits\\train-labels-idx1-ubyte")
-    
-    # Testing
-    test_data = idx2numpy.convert_from_file("MNIST_digits\\t10k-images-idx3-ubyte")
+
+    # Testing data
+    test_examples = idx2numpy.convert_from_file("MNIST_digits\\t10k-images-idx3-ubyte")
     test_labels = idx2numpy.convert_from_file("MNIST_digits\\t10k-labels-idx1-ubyte")
 
+    # Get inputs in right dimensions and the such
     flat_train_examples = parse_idx_images(train_examples)
     v_train_labels = parse_idx_labels(s_train_labels, 10)
-    
 
-    nn.print_net()
+    flat_test_examples = parse_idx_images(test_examples)
+    #v_test_labels = parse_idx_labels(test_labels, 10)
+
+    # Train
     nn.train(flat_train_examples, v_train_labels, 0.2)
-    nn.print_net()
+
+    print(test_examples[49])
+    print("Network Classification: ", nn.classify(flat_test_examples[49]))
+    print("Label: ", test_labels[49])
+
+    print(nn.test(flat_test_examples, test_labels))
