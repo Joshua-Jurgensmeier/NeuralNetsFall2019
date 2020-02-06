@@ -220,8 +220,10 @@ class NeuralNetwork:
 
 
 # Functions to prepare MNIST data for input in my NN
+# Normalize images and flatten into row vectors for input into NN 
 def parse_idx_images(idx_images):
     image_size = idx_images.shape[1] * idx_images.shape[2]
+    idx_images = idx_images / 255
     flat = idx_images.reshape((idx_images.shape[0], image_size))
     return np.expand_dims(flat, 1)
 
@@ -237,13 +239,11 @@ def parse_idx_labels(idx_labels, categories):
 
 # Main
 if __name__ == "__main__":
-    i = {
-        'num_ns': 10,
-        'f': 'logsig',
-        'df': 'dlogsig',
-    }
+
+    ALPHA = 0.2
+
     h = {
-        'num_ns': 300,
+        'num_ns': 150,
         'f': 'logsig',
         'df': 'dlogsig',
     }
@@ -253,7 +253,7 @@ if __name__ == "__main__":
         'df': 'dsoftmax',
     }
 
-    nn = NeuralNetwork(784, [i, h, o])
+    nn = NeuralNetwork(784, [h, o])
 
     # Training data
     train_examples = idx2numpy.convert_from_file("MNIST_digits\\train-images-idx3-ubyte")
@@ -271,10 +271,13 @@ if __name__ == "__main__":
     #v_test_labels = parse_idx_labels(test_labels, 10)
 
     # Train
-    nn.train(flat_train_examples, v_train_labels, 0.2)
+    nn.train(flat_train_examples, v_train_labels, ALPHA)
+    
 
     print(test_examples[49])
     print("Network Classification: ", nn.classify(flat_test_examples[49]))
     print("Label: ", test_labels[49])
 
+
+    print(nn.test(flat_train_examples, s_train_labels))
     print(nn.test(flat_test_examples, test_labels))
